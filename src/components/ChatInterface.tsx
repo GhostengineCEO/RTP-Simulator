@@ -442,7 +442,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 h-[calc(100vh-8rem)]">
+    <div className="flex flex-col lg:flex-row gap-4 h-[calc(100vh-6rem)]">
       {/* Main Chat Interface */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
@@ -534,8 +534,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
 
         {/* Chat Messages */}
-        <div className="flex-1 bg-primary-900/50 border border-primary-700 rounded-lg overflow-hidden flex flex-col">
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 bg-primary-900/50 border border-primary-700 rounded-lg overflow-hidden flex flex-col min-h-[70vh]">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[65vh]">
             <AnimatePresence>
               {messages.map((message) => (
                 <motion.div 
