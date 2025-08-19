@@ -1,0 +1,48 @@
+{
+  "name": "it-support-training-simulator",
+  "version": "1.0.0",
+  "description": "A modern web application for IT Support Training Simulation",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "start": "vite",
+    "test:scenarios": "tsx src/utils/testingScenarios.ts",
+    "test:optimal": "tsx src/utils/testingScenarios.ts --type=optimal",
+    "test:suboptimal": "tsx src/utils/testingScenarios.ts --type=suboptimal",
+    "test:edge-cases": "tsx src/utils/testingScenarios.ts --type=edge_case",
+    "test:report": "tsx src/utils/testingScenarios.ts --report",
+    "deploy:gh-pages": "npm run build && gh-pages -d dist",
+    "analyze": "npx vite-bundle-analyzer dist",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "clsx": "^2.0.0",
+    "framer-motion": "^12.23.12",
+    "lucide-react": "^0.400.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@typescript-eslint/eslint-plugin": "^7.2.0",
+    "@typescript-eslint/parser": "^7.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.6",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "tsx": "^4.20.4",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0",
+    "vite-plugin-pwa": "^0.17.0",
+    "workbox-window": "^7.0.0"
+  }
+}
