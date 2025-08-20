@@ -16,6 +16,10 @@ const TerminalEmulator: React.FC<TerminalEmulatorProps> = ({ onClose, scenarioId
   const [currentInput, setCurrentInput] = useState('');
   const [isMinimized, setIsMinimized] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [currentMode, setCurrentMode] = useState<'user' | 'privileged' | 'config'>('user');
+  const [configContext, setConfigContext] = useState('');
   const terminalRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -204,6 +208,51 @@ const TerminalEmulator: React.FC<TerminalEmulatorProps> = ({ onClose, scenarioId
 
   const currentConfig = scenarioConfig[scenarioId as keyof typeof scenarioConfig] || scenarioConfig['1'];
 
+  // Get current prompt based on mode
+  const getCurrentPrompt = () => {
+    const hostname = currentConfig.hostname;
+    switch (currentMode) {
+      case 'user':
+        return `${hostname}>`;
+      case 'config':
+        return configContext ? `${hostname}(${configContext})#` : `${hostname}(config)#`;
+      case 'privileged':
+      default:
+        return `${hostname}#`;
+    }
+  };
+
+  // Cisco IOS command parser - supports abbreviations
+  const parseCommand = (input: string): string | null => {
+    const cmd = input.toLowerCase().trim();
+    const parts = cmd.split(' ');
+    
+    // Available commands based on mode
+    const userCommands = ['enable', 'show', 'ping', 'traceroute', 'help', '?', 'exit'];
+    const privilegedCommands = ['show', 'configure', 'reload', 'clear', 'copy', 'disable', 'help', '?', 'exit'];
+    const configCommands = ['interface', 'vlan', 'ip', 'exit', 'end', 'help', '?'];
+    
+    let availableCommands: string[];
+    switch (currentMode) {
+      case 'user': availableCommands = userCommands; break;
+      case 'config': availableCommands = configCommands; break;
+      default: availableCommands = privilegedCommands; break;
+    }
+    
+    // Find matching command (supports abbreviations)
+    const matches = availableCommands.filter(command => 
+      command.startsWith(parts[0]) && parts[0].length >= 2
+    );
+    
+    if (matches.length === 1) {
+      return matches[0];
+    } else if (matches.length > 1) {
+      return 'ambiguous';
+    }
+    
+    return null;
+  };
+
   // Initialize connection on mount
   useEffect(() => {
     const initConnection = () => {
@@ -239,14 +288,184 @@ const TerminalEmulator: React.FC<TerminalEmulatorProps> = ({ onClose, scenarioId
     }
   }, [isMinimized, isConnected]);
 
+  // Get available commands for tab completion
+  const getAvailableCommands = (): string[] => {
+    const userCommands = ['enable', 'show', 'ping', 'traceroute', 'help', 'exit'];
+    const privilegedCommands = ['show', 'configure', 'reload', 'clear', 'copy', 'disable', 'help', 'exit'];
+    const configCommands = ['interface', 'vlan', 'ip', 'exit', 'end', 'help'];
+
+    switch (currentMode) {
+      case 'user': return userCommands;
+      case 'config': return configCommands;
+      default: return privilegedCommands;
+    }
+  };
+
+  // Handle tab completion
+  const handleTabCompletion = () => {
+    const input = currentInput.trim();
+    if (!input) {
+      // Show available commands when pressing tab on empty input
+      const availableCommands = getAvailableCommands();
+      const commandList = availableCommands.map(cmd => `  ${cmd}`).join('\n');
+      setHistory(prev => [...prev, 
+        { content: `${getCurrentPrompt()} ${input}`, color: 'white' },
+        { content: 'Available commands:', color: 'white' },
+        { content: commandList, color: 'green' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    const parts = input.toLowerCase().split(' ');
+    const baseCmd = parts[0];
+    
+    // Handle show command tab completion
+    if (baseCmd === 'show' || baseCmd === 'sh') {
+      if (parts.length === 1) {
+        // Show available show commands
+        const showCommands = [
+          'running-config', 'version', 'ip', 'interfaces', 'power', 'log', 
+          'phones', 'poe', 'sessions', 'storage'
+        ];
+        const commandList = showCommands.map(cmd => `  show ${cmd}`).join('\n');
+        setHistory(prev => [...prev, 
+          { content: `${getCurrentPrompt()} ${input}`, color: 'white' },
+          { content: 'Available show commands:', color: 'white' },
+          { content: commandList, color: 'green' },
+          { content: '', color: 'green' }
+        ]);
+        return;
+      }
+    }
+
+    // Find matching commands for completion
+    const availableCommands = getAvailableCommands();
+    const matches = availableCommands.filter(command => 
+      command.startsWith(baseCmd) && baseCmd.length >= 1
+    );
+
+    if (matches.length === 1) {
+      // Complete the command
+      const completedCommand = matches[0];
+      const remainingInput = parts.length > 1 ? ' ' + parts.slice(1).join(' ') : '';
+      setCurrentInput(completedCommand + remainingInput);
+    } else if (matches.length > 1) {
+      // Show multiple matches
+      const commandList = matches.map(cmd => `  ${cmd}`).join('\n');
+      setHistory(prev => [...prev, 
+        { content: `${getCurrentPrompt()} ${input}`, color: 'white' },
+        { content: 'Possible completions:', color: 'white' },
+        { content: commandList, color: 'green' },
+        { content: '', color: 'green' }
+      ]);
+    } else {
+      // No matches - show available commands
+      const commandList = availableCommands.map(cmd => `  ${cmd}`).join('\n');
+      setHistory(prev => [...prev, 
+        { content: `${getCurrentPrompt()} ${input}`, color: 'white' },
+        { content: 'Available commands:', color: 'white' },
+        { content: commandList, color: 'green' },
+        { content: '', color: 'green' }
+      ]);
+    }
+  };
+
+  // Clear terminal screen
+  const clearScreen = () => {
+    setHistory([
+      { content: `${getCurrentPrompt()} clear`, color: 'white' },
+      { content: '', color: 'green' }
+    ]);
+  };
+
+  // Handle keyboard navigation for command history
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Ctrl+C - Interrupt current command
+    if (e.ctrlKey && e.key === 'c') {
+      e.preventDefault();
+      setCurrentInput('');
+      setHistory(prev => [...prev, 
+        { content: `${getCurrentPrompt()} ${currentInput}^C`, color: 'white' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    // Ctrl+L - Clear screen
+    if (e.ctrlKey && e.key === 'l') {
+      e.preventDefault();
+      clearScreen();
+      return;
+    }
+
+    // Ctrl+A - Move cursor to beginning of line
+    if (e.ctrlKey && e.key === 'a') {
+      e.preventDefault();
+      if (inputRef.current) {
+        inputRef.current.setSelectionRange(0, 0);
+      }
+      return;
+    }
+
+    // Ctrl+E - Move cursor to end of line
+    if (e.ctrlKey && e.key === 'e') {
+      e.preventDefault();
+      if (inputRef.current) {
+        inputRef.current.setSelectionRange(currentInput.length, currentInput.length);
+      }
+      return;
+    }
+
+    // Ctrl+U - Clear line
+    if (e.ctrlKey && e.key === 'u') {
+      e.preventDefault();
+      setCurrentInput('');
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (commandHistory.length > 0) {
+        const newIndex = historyIndex < commandHistory.length - 1 ? historyIndex + 1 : commandHistory.length - 1;
+        setHistoryIndex(newIndex);
+        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex]);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        const newIndex = historyIndex - 1;
+        setHistoryIndex(newIndex);
+        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex]);
+      } else if (historyIndex === 0) {
+        setHistoryIndex(-1);
+        setCurrentInput('');
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      handleTabCompletion();
+    }
+  };
+
   const executeCommand = (input: string) => {
-    const trimmedInput = input.trim().toLowerCase();
+    const trimmedInput = input.trim();
     if (!trimmedInput) return;
 
-    // Add command to history
-    setHistory(prev => [...prev, { content: `${currentConfig.hostname}# ${trimmedInput}`, color: 'white' }]);
+    // Add command to command history
+    if (trimmedInput !== commandHistory[commandHistory.length - 1]) {
+      setCommandHistory(prev => [...prev, trimmedInput]);
+    }
+    setHistoryIndex(-1);
 
-    if (trimmedInput === 'exit') {
+    // Add command to display history with current prompt
+    setHistory(prev => [...prev, { content: `${getCurrentPrompt()} ${trimmedInput}`, color: 'white' }]);
+
+    const cmd = trimmedInput.toLowerCase();
+    const parts = cmd.split(' ');
+    const baseCmd = parts[0];
+
+    // Handle special exit commands
+    if (cmd === 'exit' && currentMode === 'user') {
       setHistory(prev => [...prev, 
         { content: '', color: 'green' },
         { content: 'Connection to host lost.', color: 'yellow' },
@@ -256,17 +475,199 @@ const TerminalEmulator: React.FC<TerminalEmulatorProps> = ({ onClose, scenarioId
       return;
     }
 
-    const command = currentConfig.commands[trimmedInput as keyof typeof currentConfig.commands];
-    if (command) {
-      const result = command();
-      setHistory(prev => [...prev, ...result, { content: '', color: 'green' }]);
-    } else {
+    // Handle mode transitions
+    if (cmd === 'enable' && currentMode === 'user') {
+      setCurrentMode('privileged');
+      setHistory(prev => [...prev, { content: '', color: 'green' }]);
+      return;
+    }
+
+    if (cmd === 'disable' && currentMode === 'privileged') {
+      setCurrentMode('user');
+      setHistory(prev => [...prev, { content: '', color: 'green' }]);
+      return;
+    }
+
+    if ((cmd === 'configure terminal' || cmd === 'conf t') && currentMode === 'privileged') {
+      setCurrentMode('config');
+      setConfigContext('');
       setHistory(prev => [...prev, 
-        { content: `Command '${trimmedInput}' not recognized`, color: 'red' },
-        { content: 'Type "help" for available commands', color: 'yellow' },
+        { content: 'Entering configuration mode. Commands may be abbreviated.', color: 'white' },
         { content: '', color: 'green' }
       ]);
+      return;
     }
+
+    if (cmd === 'exit' && currentMode === 'config') {
+      setCurrentMode('privileged');
+      setConfigContext('');
+      setHistory(prev => [...prev, { content: '', color: 'green' }]);
+      return;
+    }
+
+    if (cmd === 'end' && currentMode === 'config') {
+      setCurrentMode('privileged');
+      setConfigContext('');
+      setHistory(prev => [...prev, { content: '', color: 'green' }]);
+      return;
+    }
+
+    // Handle help commands
+    if (cmd === 'help' || cmd === '?') {
+      const helpLines = getCiscoHelp();
+      setHistory(prev => [...prev, ...helpLines, { content: '', color: 'green' }]);
+      return;
+    }
+
+    // Parse and execute Cisco commands
+    const parsedCmd = parseCommand(cmd);
+    
+    if (parsedCmd === 'ambiguous') {
+      setHistory(prev => [...prev, 
+        { content: '% Ambiguous command', color: 'red' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    if (!parsedCmd) {
+      setHistory(prev => [...prev, 
+        { content: `% Invalid input detected at '^' marker.`, color: 'red' },
+        { content: `% Type "?" for help`, color: 'yellow' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    // Execute Cisco IOS commands
+    executeCiscoCommand(parsedCmd, parts.slice(1));
+  };
+
+  const getCiscoHelp = (): TerminalLine[] => {
+    const hostname = currentConfig.hostname;
+    switch (currentMode) {
+      case 'user':
+        return [
+          { content: 'Exec commands:', color: 'white' },
+          { content: '  enable      Enter privileged EXEC mode', color: 'green' },
+          { content: '  exit        Exit from the EXEC', color: 'green' },
+          { content: '  help        Display help system', color: 'green' },
+          { content: '  ping        Send echo messages', color: 'green' },
+          { content: '  show        Show running system information', color: 'green' },
+          { content: '  traceroute  Trace route to destination', color: 'green' }
+        ];
+      case 'config':
+        return [
+          { content: 'Configuration commands:', color: 'white' },
+          { content: '  end         Exit configuration mode', color: 'green' },
+          { content: '  exit        Exit from configuration mode', color: 'green' },
+          { content: '  interface   Select interface to configure', color: 'green' },
+          { content: '  ip          Global IP configuration commands', color: 'green' },
+          { content: '  vlan        Configure VLAN parameters', color: 'green' }
+        ];
+      default: // privileged
+        return [
+          { content: 'Exec commands:', color: 'white' },
+          { content: '  clear       Reset functions', color: 'green' },
+          { content: '  configure   Configuration mode', color: 'green' },
+          { content: '  copy        Copy configuration or files', color: 'green' },
+          { content: '  disable     Turn off privileged commands', color: 'green' },
+          { content: '  exit        Exit from the EXEC', color: 'green' },
+          { content: '  reload      Halt and perform a cold restart', color: 'green' },
+          { content: '  show        Show running system information', color: 'green' }
+        ];
+    }
+  };
+
+  const executeCiscoCommand = (command: string, args: string[]) => {
+    // Handle show commands with scenario-specific data
+    if (command === 'show') {
+      const showCmd = args.join(' ');
+      handleShowCommand(showCmd);
+      return;
+    }
+
+    // Handle clear command
+    if (command === 'clear') {
+      clearScreen();
+      return;
+    }
+
+    // Handle other commands
+    setHistory(prev => [...prev, 
+      { content: `% Command "${command}" not implemented in simulation`, color: 'yellow' },
+      { content: '', color: 'green' }
+    ]);
+  };
+
+  const handleShowCommand = (showCmd: string) => {
+    const cmd = showCmd.replace(/^show\s*/, '').trim();
+    
+    // Handle Cisco IOS show commands
+    if (cmd === 'running-config' || cmd === 'run') {
+      setHistory(prev => [...prev, 
+        { content: 'Building configuration...', color: 'white' },
+        { content: '', color: 'green' },
+        { content: 'Current configuration : 2048 bytes', color: 'white' },
+        { content: '!', color: 'green' },
+        { content: '! Last configuration change at 14:32:17 UTC', color: 'green' },
+        { content: '!', color: 'green' },
+        { content: 'version 15.2', color: 'white' },
+        { content: `hostname ${currentConfig.hostname}`, color: 'white' },
+        { content: '!', color: 'green' },
+        { content: 'interface GigabitEthernet0/1', color: 'white' },
+        { content: ' description Access Port', color: 'white' },
+        { content: ' switchport mode access', color: 'white' },
+        { content: ' switchport access vlan 10', color: 'white' },
+        { content: '!', color: 'green' },
+        { content: 'end', color: 'white' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    if (cmd === 'ip interface brief' || cmd === 'ip int br') {
+      setHistory(prev => [...prev, 
+        { content: 'Interface                  IP-Address      OK? Method Status                Protocol', color: 'white' },
+        { content: 'GigabitEthernet0/1         unassigned      YES unset  up                    up      ', color: 'green' },
+        { content: 'GigabitEthernet0/2         unassigned      YES unset  down                  down    ', color: 'red' },
+        { content: 'Vlan1                      192.168.1.1     YES NVRAM  up                    up      ', color: 'green' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    if (cmd === 'version' || cmd === 'ver') {
+      setHistory(prev => [...prev, 
+        { content: `Cisco IOS Software, C2960X Software (C2960X-UNIVERSALK9-M), Version 15.2(7)E6`, color: 'white' },
+        { content: 'Technical Support: http://www.cisco.com/techsupport', color: 'white' },
+        { content: 'Copyright (c) 1986-2020 by Cisco Systems, Inc.', color: 'white' },
+        { content: `Compiled Tuesday 17-Nov-20 18:40 by prod_rel_team`, color: 'white' },
+        { content: '', color: 'green' },
+        { content: `${currentConfig.hostname} uptime is 2 days, 14 hours, 32 minutes`, color: 'green' },
+        { content: 'System returned to ROM by power-on', color: 'white' },
+        { content: 'System restarted at 09:15:23 UTC Mon Nov 15 2023', color: 'white' },
+        { content: '', color: 'green' },
+        { content: 'cisco WS-C2960X-24TS-L (PowerPC405) processor (revision B0) with 131072K bytes of memory.', color: 'white' },
+        { content: 'Processor board ID FCW1947C0LH', color: 'white' },
+        { content: '', color: 'green' }
+      ]);
+      return;
+    }
+
+    // Check for legacy command compatibility
+    const legacyCommandKey = `show ${cmd}` as keyof typeof currentConfig.commands;
+    const legacyCommand = currentConfig.commands[legacyCommandKey];
+    if (legacyCommand) {
+      const result = legacyCommand();
+      setHistory(prev => [...prev, ...result, { content: '', color: 'green' }]);
+      return;
+    }
+
+    setHistory(prev => [...prev, 
+      { content: `% Invalid input detected at '^' marker.`, color: 'red' },
+      { content: '', color: 'green' }
+    ]);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -343,12 +744,13 @@ const TerminalEmulator: React.FC<TerminalEmulatorProps> = ({ onClose, scenarioId
               {/* Current Input Line */}
               {isConnected && (
                 <form onSubmit={handleSubmit} className="flex items-center">
-                  <span className="text-green-400">{currentConfig.hostname}# </span>
+                  <span className="text-green-400">{getCurrentPrompt()} </span>
                   <input
                     ref={inputRef}
                     type="text"
                     value={currentInput}
                     onChange={(e) => setCurrentInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
                     className="flex-1 bg-transparent text-white outline-none ml-1"
                     style={{ fontFamily: 'Consolas, "Courier New", monospace' }}
                     autoComplete="off"
